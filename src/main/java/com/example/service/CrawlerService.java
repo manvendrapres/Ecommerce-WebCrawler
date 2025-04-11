@@ -16,7 +16,7 @@ import java.util.concurrent.*;
 public class CrawlerService {
 
     private static final String[] PRODUCT_URL_PATTERNS = {"/product/", "/item/", "/p/", "/products/"};
-    private static final int MAX_DEPTH = 1; // Limit the depth of crawling
+    private static final int MAX_DEPTH = 2; // Limit the depth of crawling
     private static final int MAX_THREADS = 10; // Limit the number of concurrent threads
     private static final long REQUEST_DELAY_MS = 2000; // Delay between requests in milliseconds
     private static final long RETRY_DELAY_MS = 5000; // Delay before retrying after an error
@@ -49,6 +49,20 @@ public class CrawlerService {
                 Thread.sleep(REQUEST_DELAY_MS);
 
                 Document doc = Jsoup.connect(url).get();
+
+//                Causing very much latest due to nested concurrency and (probably starvation of deadlock )
+//                doc.select("a[href]").parallelStream()
+//                        .map(link -> link.attr("abs:href"))
+//                        .filter(this::isValidUrl)
+//                        .filter(this::isCrawlAllowed)
+//                        .forEach(absUrl -> {
+//                            if (isProductUrl(absUrl)) {
+//                                productUrls.add(absUrl);
+//                            } else if (isValidUrl(absUrl)) {
+//                                crawl(absUrl, productUrls, depth + 1).join();
+//                            }
+//                        });
+
                 Elements links = doc.select("a[href]");
 
                 for (Element link : links) {
@@ -85,16 +99,13 @@ public class CrawlerService {
     }
 
     private boolean isCrawlAllowed(String url) {
-        String domain = getDomain(url);
-        Set<String> disallowedPaths = robotsCache.get(domain);
-
-        if (disallowedPaths == null) {
-            disallowedPaths = fetchAndParseRobots(domain);
-            robotsCache.put(domain, disallowedPaths); // Cache the disallowed paths
+        try {
+            String domain = new URL(url).getHost();
+            Set<String> disallowed = robotsCache.computeIfAbsent(domain, this::fetchAndParseRobots);
+            return disallowed.stream().noneMatch(url::contains);
+        } catch (Exception e) {
+            return true;
         }
-
-        // Check if the URL matches any disallowed paths
-        return disallowedPaths.stream().noneMatch(url::contains);
     }
 
     private Set<String> fetchAndParseRobots(String domain) {
@@ -107,19 +118,11 @@ public class CrawlerService {
             for (String line : lines) {
                 if (line.startsWith("Disallow:")) {
                     String disallowedPath = line.replace("Disallow:", "").trim();
-                    disallowedPaths.add(disallowedPath);
+                    if (!disallowedPath.isEmpty()) {
+                        disallowedPaths.add(disallowedPath);
+                    }
                 }
             }
-//            for (String line : lines) {
-//                if (line.startsWith("User -agent: *")) {
-//                    for (String disallow : lines) {
-//                        if (disallow.startsWith("Disallow:")) {
-//                            String disallowedPath = disallow.replace("Disallow:", "").trim();
-//                            disallowedPaths.add(disallowedPath);
-//                        }
-//                    }
-//                }
-//            }
 
         } catch (IOException e) {
             System.err.println("Error fetching robots.txt : " + e.getMessage());
