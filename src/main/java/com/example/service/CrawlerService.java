@@ -32,11 +32,14 @@ public class CrawlerService {
 
     public CompletableFuture<Set<String>> crawl(String domain) {
         Set<String> productUrls = new HashSet<>();
-        return crawl(domain, productUrls, 0);
+        String targetDomain = getDomain(domain);
+        return crawl(domain, productUrls, 0, targetDomain);
     }
 
-    private CompletableFuture<Set<String>> crawl(String url, Set<String> productUrls, int depth) {
-        if (depth > MAX_DEPTH || visitedUrls.contains(url)) {
+    private CompletableFuture<Set<String>> crawl(String url, Set<String> productUrls, int depth, String targetDomain) {
+        String currentDomain = getDomain(url);
+
+        if (depth > MAX_DEPTH || visitedUrls.contains(url) || currentDomain == null) {
             return CompletableFuture.completedFuture(productUrls);
         }
 
@@ -59,15 +62,17 @@ public class CrawlerService {
                     String absUrl = link.attr("abs:href");
                     logger.debug("absUrl : {}", absUrl);
 
-                    if (isProductUrl(absUrl)) {
-                        productUrls.add(absUrl);
-                    } else if (isValidUrl(absUrl)) {
-                        // Recursively crawl the link if it's not a product URL
-                        crawl(absUrl, productUrls, depth + 1);
+                    if( isValidUrl(absUrl) && targetDomain.equalsIgnoreCase(normalizeDomain(getDomain(absUrl))) ){
+                        if (isProductUrl(absUrl)) {
+                            productUrls.add(absUrl);
+                        } else {
+                            // Recursively crawl the link if it's not a product URL
+                            crawl(absUrl, productUrls, depth + 1, targetDomain);
+                        }
                     }
                 }
             } catch (IOException e) {
-                handleIOException(url, e);
+                handleIOException(url, e, targetDomain);
 //                logger.debug("Error fetching URL: {} - {}", url, e.getMessage());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt(); // Restore interrupted status
@@ -87,6 +92,20 @@ public class CrawlerService {
 
     private boolean isValidUrl(String url) {
         return url.startsWith("http://") || url.startsWith("https://");
+    }
+
+    private String getDomain(String url) {
+        try {
+            URL parsedUrl = new URL(url);
+            return parsedUrl.getHost();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String normalizeDomain(String domain) {
+        if (domain == null) return null;
+        return domain.startsWith("www.") ? domain.substring(4) : domain;
     }
 
     private boolean isCrawlAllowed(String url) {
@@ -123,12 +142,12 @@ public class CrawlerService {
     }
 
 
-    private void handleIOException(String url, IOException e) {
+    private void handleIOException(String url, IOException e, String targetDomain) {
         if (e.getMessage().contains("429")) {
             logger.warn("To many requests Error fetching URL: {} - Status=429", url);
             try {
                 Thread.sleep(RETRY_DELAY_MS);
-                crawl(url, new HashSet<>(), 0); // Retry crawling the same URL
+                crawl(url, new HashSet<>(), 0, targetDomain); // Retry crawling the same URL
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt(); // Restore interrupted status
             }
