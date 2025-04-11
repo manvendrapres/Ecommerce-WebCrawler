@@ -14,23 +14,13 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/crawler")
 public class CrawlerController {
 
-    Logger logger = LoggerFactory.getLogger(CrawlerController.class);
+    private static final Logger logger = LoggerFactory.getLogger(CrawlerController.class);
 
     @Autowired
     private CrawlerService crawlerService;
 
     @PostMapping("/crawl")
     public Map<String, Set<String>> crawl(@RequestBody List<String> domains) {
-//        Map<String, CompletableFuture<Set<String>>> futureResults = new HashMap<>();
-//
-//        for (String domain : domains) {
-//            futureResults.put(domain, crawlerService.crawl(domain));
-//        }
-//
-//        Map<String, Set<String>> results = new HashMap<>();
-//        futureResults.forEach((domain, future) -> results.put(domain, future.join()));
-//
-//        return results;
 
         return domains.parallelStream()  // Parallelize domain-wise
                 .collect(Collectors.toMap(
@@ -39,7 +29,7 @@ public class CrawlerController {
                             try {
                                 return crawlerService.crawl(domain).join();
                             } catch (Exception e) {
-                                logger.error("Failed crawling {}", domain, e);
+                                logger.error("Failed crawling : {}", domain, e);
                                 return Set.of();
                             }
                         }

@@ -4,6 +4,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -15,11 +17,13 @@ import java.util.concurrent.*;
 @Service
 public class CrawlerService {
 
+    private static final Logger logger = LoggerFactory.getLogger(CrawlerService.class);
+
     private static final String[] PRODUCT_URL_PATTERNS = {"/product/", "/item/", "/p/", "/products/"};
     private static final int MAX_DEPTH = 2; // Limit the depth of crawling
-    private static final int MAX_THREADS = 10; // Limit the number of concurrent threads
-    private static final long REQUEST_DELAY_MS = 2000; // Delay between requests in milliseconds
-    private static final long RETRY_DELAY_MS = 5000; // Delay before retrying after an error
+    private static final int MAX_THREADS = 10;
+    private static final long REQUEST_DELAY_MS = 2000;
+    private static final long RETRY_DELAY_MS = 5000;
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(MAX_THREADS);
     private final Set<String> visitedUrls = ConcurrentHashMap.newKeySet();
@@ -49,25 +53,12 @@ public class CrawlerService {
                 Thread.sleep(REQUEST_DELAY_MS);
 
                 Document doc = Jsoup.connect(url).get();
-
-//                Causing very much latest due to nested concurrency and (probably starvation of deadlock )
-//                doc.select("a[href]").parallelStream()
-//                        .map(link -> link.attr("abs:href"))
-//                        .filter(this::isValidUrl)
-//                        .filter(this::isCrawlAllowed)
-//                        .forEach(absUrl -> {
-//                            if (isProductUrl(absUrl)) {
-//                                productUrls.add(absUrl);
-//                            } else if (isValidUrl(absUrl)) {
-//                                crawl(absUrl, productUrls, depth + 1).join();
-//                            }
-//                        });
-
                 Elements links = doc.select("a[href]");
 
                 for (Element link : links) {
                     String absUrl = link.attr("abs:href");
-//                    System.out.println("absUrl : " + absUrl );
+                    logger.debug("absUrl : {}", absUrl);
+
                     if (isProductUrl(absUrl)) {
                         productUrls.add(absUrl);
                     } else if (isValidUrl(absUrl)) {
@@ -77,7 +68,7 @@ public class CrawlerService {
                 }
             } catch (IOException e) {
                 handleIOException(url, e);
-//                System.err.println("Error fetching URL: " + url + " - " + e.getMessage());
+//                logger.debug("Error fetching URL: {} - {}", url, e.getMessage());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt(); // Restore interrupted status
             }
@@ -104,6 +95,7 @@ public class CrawlerService {
             Set<String> disallowed = robotsCache.computeIfAbsent(domain, this::fetchAndParseRobots);
             return disallowed.stream().noneMatch(url::contains);
         } catch (Exception e) {
+            logger.debug("Error fetching URL while checking for crawling permission : {} - {}", url, e.getMessage());
             return true;
         }
     }
@@ -125,63 +117,25 @@ public class CrawlerService {
             }
 
         } catch (IOException e) {
-            System.err.println("Error fetching robots.txt : " + e.getMessage());
+            logger.warn("Error fetching robots.txt : {}", e.getMessage());
         }
         return disallowedPaths;
     }
 
-    private String getDomain(String url) {
-        try {
-            URL parsedUrl = new URL(url);
-            return parsedUrl.getHost();
-        } catch (Exception e) {
-            return null; // Return null if the URL is invalid
-        }
-    }
-
-//    private boolean isCrawlAllowed(String url) {
-//        try {
-//            URL parsedUrl = new URL(url);
-//            String robotsUrl = parsedUrl.getProtocol() + "://" + parsedUrl.getHost() + "/robots.txt";
-//            Document robotsDoc = Jsoup.connect(robotsUrl).get();
-//            String robotsContent = robotsDoc.body().text();
-////            System.out.println("robotsContent : " + robotsContent);
-//
-//            // Simple parsing of robots.txt
-//            String[] lines = robotsContent.split("\n");
-//            for (String line : lines) {
-//                if (line.startsWith("User -agent: *")) {
-//                    // Check for disallowed paths
-//                    for (String disallow : lines) {
-//                        if (disallow.startsWith("Disallow:")) {
-//                            String disallowedPath = disallow.replace("Disallow:", "").trim();
-//                            if (url.contains(disallowedPath)) {
-//                                return false; // Crawling is not allowed for this path
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//        } catch (IOException e) {
-//            System.err.println("Error fetching robots.txt: " + e.getMessage());
-//        }
-//        return true; // Default to allowed if robots.txt cannot be fetched
-//    }
-
 
     private void handleIOException(String url, IOException e) {
         if (e.getMessage().contains("429")) {
-            System.err.println("Error fetching URL: " + url + " - HTTP error fetching URL. Status=429");
+            logger.warn("To many requests Error fetching URL: {} - Status=429", url);
             try {
-                Thread.sleep(RETRY_DELAY_MS); // Wait before retrying
+                Thread.sleep(RETRY_DELAY_MS);
                 crawl(url, new HashSet<>(), 0); // Retry crawling the same URL
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt(); // Restore interrupted status
             }
         } else if (e.getMessage().contains("500")) {
-            System.err.println("Error fetching URL: " + url + " - HTTP error fetching URL. Status=500");
+            logger.warn("Server Error fetching URL: {} - Status=500", url);
         } else {
-            System.err.println("Error fetching URL: " + url + " - " + e.getMessage());
+            logger.error("Error fetching URL: {} - {}", url, e.getMessage());
         }
     }
 }
